@@ -9,6 +9,7 @@
 export { registerMigrateCommand, type MigrateCommandOptions } from './command';
 export { formatSessionLabel, isImportedSession, type SessionLabelInput } from './badge';
 export { detectPendingMigration } from './detect-pending';
+export { repairImportedSessionsAtStartup } from './repair-imported';
 export { MIGRATE_HEADLESS_EXIT, runHeadlessMigrate } from './run-headless';
 export {
   resolveLegacySourceHome,

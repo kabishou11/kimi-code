@@ -20,6 +20,7 @@ import {
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from '#/migration/index';
+import { repairImportedSessionsAtStartup } from '#/migration/repair-imported';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
@@ -98,6 +99,7 @@ export async function runShell(
   });
 
   await harness.ensureConfigFile();
+  await repairImportedSessionsAtStartup(harness.homeDir);
   const legacySource = resolveLegacySourceHome(process.env, homedir(), process.cwd());
   const sourceIsTarget = sameLegacyPath(legacySource.sourceHome, harness.homeDir);
   if (sourceIsTarget) {

@@ -122,6 +122,29 @@ describe('detectPendingMigration', () => {
     expect(plan?.sessionScanFailures?.length).toBeGreaterThan(0);
   });
 
+  it('keeps a completed marker suppressed even when an imported session still needs turn repair', async () => {
+    await writeFile(join(src, 'config.toml'), 'default_thinking = true\n', 'utf-8');
+    await writeFile(
+      join(src, '.migrated-to-kimi-code'),
+      JSON.stringify({ version: 1, target_path: tgt }),
+      'utf-8',
+    );
+    const sessionDir = join(tgt, 'sessions', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'ses_old-import');
+    await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+    await writeFile(
+      join(sessionDir, 'state.json'),
+      JSON.stringify({ custom: { imported_from_kimi_cli: true } }),
+      'utf-8',
+    );
+    await writeFile(
+      join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+      '{"type":"metadata","protocol_version":"1.0","created_at":1}\n{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"hi"}],"toolCalls":[]}}\n',
+      'utf-8',
+    );
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).toBeNull();
+  });
+
   it('detects skills from skillsSourceHome when it differs from the source home', async () => {
     const skillsHome = await mkdtemp(join(tmpdir(), 'detect-pending-skills-'));
     try {

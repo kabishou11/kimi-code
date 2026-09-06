@@ -17,6 +17,7 @@ import chalk from 'chalk';
 import { type Command, Option } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
+import { repairImportedSessionsAtStartup } from '#/migration/repair-imported';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -320,6 +321,7 @@ async function runServerInProcess(
   // Registers the telemetry provider for `track` / `shutdownTelemetry`; the
   // client itself is not passed into kap-server.
   initializeServerTelemetry({ version });
+  await repairImportedSessionsAtStartup(getDataDir());
 
   let running: RoutedServer | undefined;
   let stopping = false;

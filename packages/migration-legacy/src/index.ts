@@ -15,3 +15,7 @@ export {
   type Prompt1Choice,
   type Prompt2Choice,
 } from './prompt.js';
+export {
+  repairImportedSessionWire,
+  repairImportedSessionsInHome,
+} from './sessions/repair-imported.js';
