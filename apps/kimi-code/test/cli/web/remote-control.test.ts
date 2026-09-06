@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  resolveKimiCodeOAuthKey,
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -22,6 +23,7 @@ import {
   isRemoteControlEnabled,
   parseRawHttpRequest,
   resolveRemoteControlRelayOrigin,
+  resolveRemoteControlTokenStorageName,
   rewriteRemoteControlResponse,
   startRemoteControl,
   type RemoteControlHandle,
@@ -201,7 +203,120 @@ describe('Remote Control HTTP forwarding', () => {
   });
 });
 
+const GLOBAL_OAUTH_HOST = 'https://auth.kimi.ai';
+const GLOBAL_BASE_URL = 'https://api.kimi.ai/coding/v1';
+
+function writeGlobalLoginConfig(homeDir: string): { oauthKey: string; storageName: string } {
+  const oauthKey = resolveKimiCodeOAuthKey({
+    oauthHost: GLOBAL_OAUTH_HOST,
+    baseUrl: GLOBAL_BASE_URL,
+  });
+  const storageName = resolveKimiTokenStorageName({ oauthKey });
+  writeFileSync(
+    join(homeDir, 'config.toml'),
+    [
+      '[providers."managed:kimi-code"]',
+      'type = "kimi"',
+      `baseUrl = "${GLOBAL_BASE_URL}"`,
+      'apiKey = ""',
+      '',
+      '[providers."managed:kimi-code".oauth]',
+      'storage = "file"',
+      `key = ${JSON.stringify(oauthKey)}`,
+      `oauthHost = "${GLOBAL_OAUTH_HOST}"`,
+      '',
+    ].join('\n'),
+  );
+  return { oauthKey, storageName };
+}
+
+describe('Remote Control credential slot', () => {
+  it('uses the default slot when no env or persisted oauth is configured', () => {
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    delete process.env['KIMI_CODE_BASE_URL'];
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-slot-default-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    expect(resolveRemoteControlTokenStorageName(homeDir)).toBe(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+    );
+  });
+
+  it('resolves the env-scoped slot from persisted oauthHost and baseUrl', () => {
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    delete process.env['KIMI_CODE_BASE_URL'];
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-slot-config-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const { storageName } = writeGlobalLoginConfig(homeDir);
+    expect(storageName).not.toBe(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+    );
+    expect(resolveRemoteControlTokenStorageName(homeDir)).toBe(storageName);
+  });
+
+  it('resolves the env-scoped slot from KIMI_CODE_OAUTH_HOST and KIMI_CODE_BASE_URL', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-slot-env-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', GLOBAL_OAUTH_HOST);
+    vi.stubEnv('KIMI_CODE_BASE_URL', GLOBAL_BASE_URL);
+    const storageName = resolveKimiTokenStorageName({
+      oauthKey: resolveKimiCodeOAuthKey({
+        oauthHost: GLOBAL_OAUTH_HOST,
+        baseUrl: GLOBAL_BASE_URL,
+      }),
+    });
+    expect(resolveRemoteControlTokenStorageName(homeDir)).toBe(storageName);
+  });
+});
+
 describe('Remote Control tunnel', () => {
+  it('uses the env-scoped credential slot for a persisted global-region login', async () => {
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    delete process.env['KIMI_CODE_BASE_URL'];
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-global-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const { storageName } = writeGlobalLoginConfig(homeDir);
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(storageName, TOKEN);
+    const relay = await startAuthRelay();
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:1',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      stderr: { write: () => true },
+    });
+
+    expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
+    expect(relay.registrations).toHaveLength(1);
+  });
+
+  it('does not read the default slot when a global-region login is persisted', async () => {
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    delete process.env['KIMI_CODE_BASE_URL'];
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-wrong-slot-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    writeGlobalLoginConfig(homeDir);
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+      TOKEN,
+    );
+
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:1',
+        localServerToken: 'local-server-token',
+        stderr: { write: () => true },
+      }),
+    ).rejects.toThrow('Remote Control requires a Kimi login. Run `kimi login` first.');
+  });
+
   it('surfaces register_nak details', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-nak-'));
     cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));

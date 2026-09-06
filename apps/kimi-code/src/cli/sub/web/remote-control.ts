@@ -7,8 +7,10 @@ import {
   createKimiDeviceId,
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  resolveKimiCodeRuntimeAuth,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
+import { loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
 import { WebSocket, type RawData } from 'ws';
 import chalk from 'chalk';
 
@@ -287,6 +289,16 @@ export function rewriteRemoteControlResponse(
   return body;
 }
 
+export function resolveRemoteControlTokenStorageName(homeDir: string): string {
+  const { config } = loadRuntimeConfigSafe(resolveConfigPath({ homeDir }));
+  const provider = config.providers?.[KIMI_CODE_PROVIDER_NAME];
+  const auth = resolveKimiCodeRuntimeAuth({
+    configuredBaseUrl: provider?.baseUrl,
+    configuredOAuthRef: provider?.oauth,
+  });
+  return resolveKimiTokenStorageName({ oauthKey: auth.oauthRef.key });
+}
+
 export async function startRemoteControl(
   options: RemoteControlOptions,
 ): Promise<RemoteControlHandle> {
@@ -294,9 +306,7 @@ export async function startRemoteControl(
     throw new Error('Remote Control requires local server authentication.');
   }
   const storage = new FileTokenStorage(join(options.homeDir, 'credentials'));
-  const token = await storage.load(
-    resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
-  );
+  const token = await storage.load(resolveRemoteControlTokenStorageName(options.homeDir));
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
   }

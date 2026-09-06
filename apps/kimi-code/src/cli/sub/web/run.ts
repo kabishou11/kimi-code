@@ -397,18 +397,25 @@ async function runServerInProcess(
 
   track('server_started', { daemon: false });
 
-  process.once('SIGINT', () => {
+  const onSigint = (): void => {
     void shutdown('SIGINT');
-  });
-  process.once('SIGTERM', () => {
+  };
+  const onSigterm = (): void => {
     void shutdown('SIGTERM');
-  });
+  };
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
 
   running.logger.info({ address: running.address }, 'server ready');
 
   try {
     await hooks.onReady?.(running.address);
   } catch (error) {
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
+    const message = error instanceof Error ? error.message : String(error);
+    process.exitCode = 1;
+    process.stderr.write(`${message}\n`);
     try {
       await hooks.onShutdown?.('startup_failed');
     } finally {
